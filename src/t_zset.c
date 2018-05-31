@@ -2135,6 +2135,18 @@ void zunionInterGenericCommand(client *c, robj *dstkey, int op) {
     zskiplistNode *znode;
     int touched = 0;
 
+    /* ***
+     * added by Gumreal 20180530
+     * limit_top
+     * 1: only keep one item with min score,
+     * -1: only keep one item with max score
+     */
+    int limit_top = 0;
+    int first = 1;      /* 1: first item in the dst zset */
+    double top = 0.0;   /* min or max score */
+    int random = 0;
+    /* *** */
+
     /* expect setnum input keys to be given */
     if ((getLongFromObjectOrReply(c, c->argv[2], &setnum, NULL) != C_OK))
         return;
@@ -2206,6 +2218,22 @@ void zunionInterGenericCommand(client *c, robj *dstkey, int op) {
                     return;
                 }
                 j++; remaining--;
+
+            /* *** added by Gumreal 20180530: begin */
+            } else if(!strcasecmp(c->argv[j]->ptr, "limit")){
+                j++; remaining--;
+                if(!strcasecmp(c->argv[j]->ptr, "1")){
+                    limit_top = 1;
+                }else if(!strcasecmp(c->argv[j]->ptr, "-1")){
+                    limit_top = -1;
+                }else{
+                    zfree(src);
+                    addReply(c,shared.syntaxerr);
+                    return;
+                }
+                j++; remaining--;
+            /* *** */
+
             } else {
                 zfree(src);
                 addReply(c,shared.syntaxerr);
@@ -2228,6 +2256,10 @@ void zunionInterGenericCommand(client *c, robj *dstkey, int op) {
             /* Precondition: as src[0] is non-empty and the inputs are ordered
              * by size, all src[i > 0] are non-empty too. */
             zuiInitIterator(&src[0]);
+
+            /* *** added by Gumreal 20180530 */
+            srand(time(NULL));
+
             while (zuiNext(&src[0],&zval)) {
                 double score, value;
 
@@ -2250,12 +2282,46 @@ void zunionInterGenericCommand(client *c, robj *dstkey, int op) {
 
                 /* Only continue when present in every input. */
                 if (j == setnum) {
+                    /* ***  added by Gumreal 20180530 */
+                    if(0==limit_top){
+                        tmp = zuiNewSdsFromValue(&zval);
+                        znode = zslInsert(dstzset->zsl,score,tmp);
+                        dictAdd(dstzset->dict,tmp,&znode->score);
+                        if (sdslen(tmp) > maxelelen) maxelelen = sdslen(tmp);
+                    }else if(1==first){
+                         top = score;
+                         tmp = zuiNewSdsFromValue(&zval);
+                         first = 0;
+                    }else if((1==limit_top && score<=top)||(-1==limit_top && score>=top)){
+                         if(fabs(score-top)<0.000001){
+                            random = rand();
+                            if(random % 2 ==0){
+                                tmp = zuiNewSdsFromValue(&zval);
+                            }
+                         }else{
+                            top = score;
+                            tmp = zuiNewSdsFromValue(&zval);
+                         }
+                    }
+                    /* *** */
+
+                    /* *** commented by Gumreal 20180530
                     tmp = zuiNewSdsFromValue(&zval);
                     znode = zslInsert(dstzset->zsl,score,tmp);
                     dictAdd(dstzset->dict,tmp,&znode->score);
                     if (sdslen(tmp) > maxelelen) maxelelen = sdslen(tmp);
+                    *** */
                 }
             }
+
+            /* ***  added by Gumreal 20180530 */
+            if(0!=limit_top && 0==first){
+                znode = zslInsert(dstzset->zsl,top,tmp);
+                dictAdd(dstzset->dict,tmp,&znode->score);
+                if (sdslen(tmp) > maxelelen) maxelelen = sdslen(tmp);
+            }
+            /* *** */
+
             zuiClearIterator(&src[0]);
         }
     } else if (op == SET_OP_UNION) {
