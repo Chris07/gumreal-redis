@@ -2001,6 +2001,9 @@ void latencyCommand(client *c);
 void moduleCommand(client *c);
 void securityWarningCommand(client *c);
 
+/* *** Added by Gumreal 20180605 */
+void zinterGetCommand(client *c);
+
 #if defined(__GNUC__)
 void *calloc(size_t count, size_t size) __attribute__ ((deprecated));
 void free(void *ptr) __attribute__ ((deprecated));

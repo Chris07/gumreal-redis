@@ -2423,6 +2423,186 @@ void zinterstoreCommand(client *c) {
     zunionInterGenericCommand(c,c->argv[1], SET_OP_INTER);
 }
 
+/* *** added by Gumreal 20180530 */
+void zinterGetCommand(client *c){
+    /* 1. declear */
+    int i, j;
+    long setnum;
+    int aggregate = REDIS_AGGR_SUM;
+    zsetopsrc *src;
+    zsetopval zval;
+    sds tmp;
+
+    int limit_top = -1; /* default, get an item with the max score */
+    int first = 1;      /* 1: first item in the dst zset */
+    double top = 0.0;   /* min or max score */
+    int random = 0;
+
+    /* 2. input parameters: expect setnum input keys to be given */
+    /* 2.1 set number */
+    if ((getLongFromObjectOrReply(c, c->argv[1], &setnum, NULL) != C_OK)){
+        /* no setnum */
+        return;
+    }
+    if (setnum < 1) {
+        /* invalid setnum */
+        addReplyError(c, "at least 1 input key is needed for ZINTERGET");
+        return;
+    }
+    if (setnum > c->argc-2) {
+        /* setnum is bigger than the remain parameters count */
+        addReply(c, shared.syntaxerr);
+        return;
+    }
+
+    /* 2.2 read keys to be used for input */
+    src = zcalloc(sizeof(zsetopsrc) * setnum);
+    for (i = 0, j = 2; i < setnum; i++, j++) {
+        robj *obj = lookupKeyWrite(c->db,c->argv[j]);
+        if (obj != NULL) {
+            if (obj->type != OBJ_ZSET && obj->type != OBJ_SET) {
+                zfree(src);
+                addReply(c,shared.wrongtypeerr);
+                return;
+            }
+
+            src[i].subject = obj;
+            src[i].type = obj->type;
+            src[i].encoding = obj->encoding;
+        } else {
+            src[i].subject = NULL;
+        }
+
+        /* Default all weights to 1. */
+        src[i].weight = 1.0;
+    }
+
+    /* 2.3 parse optional extra arguments */
+    if (j < c->argc) {
+        int remaining = c->argc - j;
+        while (remaining) {
+            if (remaining >= (setnum + 1) && !strcasecmp(c->argv[j]->ptr,"weights")){
+                /* weights */
+                j++; remaining--;
+                for (i = 0; i < setnum; i++, j++, remaining--) {
+                    if (getDoubleFromObjectOrReply(c, c->argv[j],&src[i].weight, "weight value is not a float") != C_OK){
+                        zfree(src);
+                        return;
+                    }
+                }
+
+            } else if (remaining >= 2 && !strcasecmp(c->argv[j]->ptr,"aggregate")){
+                /* aggregate */
+                j++; remaining--;
+                if (!strcasecmp(c->argv[j]->ptr,"sum")) {
+                    aggregate = REDIS_AGGR_SUM;
+                } else if (!strcasecmp(c->argv[j]->ptr,"min")) {
+                    aggregate = REDIS_AGGR_MIN;
+                } else if (!strcasecmp(c->argv[j]->ptr,"max")) {
+                    aggregate = REDIS_AGGR_MAX;
+                } else {
+                    zfree(src);
+                    addReply(c,shared.syntaxerr);
+                    return;
+                }
+                j++; remaining--;
+
+            } else if(!strcasecmp(c->argv[j]->ptr, "limit")){
+                /* limit */
+                j++; remaining--;
+                if(!strcasecmp(c->argv[j]->ptr, "1")){
+                    limit_top = 1;
+                }else if(!strcasecmp(c->argv[j]->ptr, "-1")){
+                    limit_top = -1;
+                }else{
+                    zfree(src);
+                    addReply(c,shared.syntaxerr);
+                    return;
+                }
+                j++; remaining--;
+
+            } else {
+                zfree(src);
+                addReply(c,shared.syntaxerr);
+                return;
+            }
+        }
+    }
+
+    /* 3. sort sets from the smallest to largest, this will improve our algorithm's performance */
+    /* 3.1 sort */
+    qsort(src,setnum,sizeof(zsetopsrc),zuiCompareByCardinality);
+
+    /* 3.2 Skip everything if the smallest input is empty. */
+    if (0 == zuiLength(&src[0])) {
+        zfree(src);
+        addReply(c,shared.czero);
+        return;
+    }
+
+    /* 4. inter */
+    /* 4.1 init variables and the iterator */
+    srand(time(NULL));
+    memset(&zval, 0, sizeof(zval));
+    zuiInitIterator(&src[0]);
+
+    /* 4.2 iterate the smallest set */
+    while (zuiNext(&src[0],&zval)) {
+        double score, value;
+        score = src[0].weight * zval.score;
+        if (isnan(score)) score = 0;
+
+        /* find the item in other sets */
+        for (j = 1; j < setnum; j++) {
+            if (src[j].subject == src[0].subject) {
+                value = zval.score*src[j].weight;
+                zunionInterAggregate(&score,value,aggregate);
+            } else if (zuiFind(&src[j],&zval,&value)) {
+                value *= src[j].weight;
+                zunionInterAggregate(&score,value,aggregate);
+            } else {
+                break;
+            }
+        }
+
+        /* Only continue when present in every input. */
+        if (j == setnum) {
+            if(1==first){
+                 top = score;
+                 tmp = zuiNewSdsFromValue(&zval);
+                 first = 0;
+            }else if((1==limit_top && score<=top)||(-1==limit_top && score>=top)){
+                 if(fabs(score-top)<0.000001){
+                    random = rand();
+                    if(random % 2 ==0){
+                        tmp = zuiNewSdsFromValue(&zval);
+                    }
+                 }else{
+                    top = score;
+                    tmp = zuiNewSdsFromValue(&zval);
+                 }
+            }
+        }
+    }
+
+    /* 4.3 the result has been saved to tmp and top */
+    if(tmp){
+        addReplyMultiBulkLen(c, 2);
+        addReplyBulkCBuffer(c, tmp, sdslen(tmp));
+        addReplyDouble(c, top);
+    }else{
+        /* empty result */
+        addReplyMultiBulkLen(c, 1);
+        addReply(c,shared.czero);
+    }
+
+    /* 4.4 clear the iterator */
+    zuiClearIterator(&src[0]);
+
+    /* 5. free src */
+    zfree(src);
+}
+
 void zrangeGenericCommand(client *c, int reverse) {
     robj *key = c->argv[1];
     robj *zobj;
