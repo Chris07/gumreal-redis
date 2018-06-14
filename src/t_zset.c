@@ -2470,7 +2470,10 @@ void zinterGetCommand(client *c){
             src[i].type = obj->type;
             src[i].encoding = obj->encoding;
         } else {
-            src[i].subject = NULL;
+            //if any SET or ZSET does not exists, just return empty
+            zfree(src);
+            addReply(c,shared.czero);
+            return;
         }
 
         /* Default all weights to 1. */
@@ -2554,7 +2557,9 @@ void zinterGetCommand(client *c){
 
         /* find the item in other sets */
         for (j = 1; j < setnum; j++) {
-            if (src[j].subject == src[0].subject) {
+            if (NULL == src[j].subject){
+                break;
+            }else if (src[j].subject == src[0].subject) {
                 value = zval.score*src[j].weight;
                 zunionInterAggregate(&score,value,aggregate);
             } else if (zuiFind(&src[j],&zval,&value)) {
@@ -2571,6 +2576,7 @@ void zinterGetCommand(client *c){
                  top = score;
                  tmp = zuiNewSdsFromValue(&zval);
                  has_result = true;
+
             }else if((1==limit_top && score<=top)||(-1==limit_top && score>=top)){
                  if(fabs(score-top)<0.000001){
                     random = rand();
