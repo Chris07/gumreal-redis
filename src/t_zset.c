@@ -2434,7 +2434,7 @@ void zinterGetCommand(client *c){
     sds tmp;
 
     int limit_top = -1; /* default, get an item with the max score */
-    int first = 1;      /* 1: first item in the dst zset */
+    bool has_result = false;      /* has result or not */
     double top = 0.0;   /* min or max score */
     int random = 0;
 
@@ -2458,7 +2458,7 @@ void zinterGetCommand(client *c){
     /* 2.2 read keys to be used for input */
     src = zcalloc(sizeof(zsetopsrc) * setnum);
     for (i = 0, j = 2; i < setnum; i++, j++) {
-        robj *obj = lookupKeyWrite(c->db,c->argv[j]);
+        robj *obj = lookupKeyRead(c->db,c->argv[j]);
         if (obj != NULL) {
             if (obj->type != OBJ_ZSET && obj->type != OBJ_SET) {
                 zfree(src);
@@ -2567,10 +2567,10 @@ void zinterGetCommand(client *c){
 
         /* Only continue when present in every input. */
         if (j == setnum) {
-            if(1==first){
+            if(!has_result){
                  top = score;
                  tmp = zuiNewSdsFromValue(&zval);
-                 first = 0;
+                 has_result = true;
             }else if((1==limit_top && score<=top)||(-1==limit_top && score>=top)){
                  if(fabs(score-top)<0.000001){
                     random = rand();
@@ -2586,13 +2586,12 @@ void zinterGetCommand(client *c){
     }
 
     /* 4.3 the result has been saved to tmp and top */
-    if(tmp){
+    if(has_result && tmp){
         addReplyMultiBulkLen(c, 2);
         addReplyBulkCBuffer(c, tmp, sdslen(tmp));
         addReplyDouble(c, top);
     }else{
         /* empty result */
-        addReplyMultiBulkLen(c, 1);
         addReply(c,shared.czero);
     }
 
