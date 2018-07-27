@@ -19,3 +19,10 @@ min 或者 max，取决于参数 limit 的值。
 
 ## 语法
 ZINTERGET numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [LIMIT 1|-1]
+
+# Added: zintergetn
+进行 zinter 操作， 不保留结果集合，返回结果集合中指定数量的 max score 或 min score 元素。
+min 或者 max， 取决于参数 limit 的值。
+
+## 语法
+ZINTERGETN numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [LIMIT n|-n]

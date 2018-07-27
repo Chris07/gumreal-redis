@@ -2424,7 +2424,7 @@ void zinterstoreCommand(client *c) {
 }
 
 /* *** added by Gumreal 20180530 */
-void zinterGetCommand(client *c){
+void zintergetCommand(client *c){
     /* 1. declear */
     int i, j;
     long setnum;
@@ -2616,12 +2616,10 @@ void zintergetnCommand(client *c){
     int aggregate = REDIS_AGGR_SUM;
     zsetopsrc *src;
     zsetopval zval;
-    sds tmp;
 
-    int limit_top = -1; /* default, get an item with the max score */
-    bool has_result = false;      /* has result or not */
-    double top = 0.0;   /* min or max score */
-    int random = 0;
+    unsigned long needResultCount = 1;
+    long limit = -1; /* default, get an item with the max score */
+    zskiplist *zslResult = zslCreate(); /* temp result zskiplist */
 
     /* 2. input parameters: expect setnum input keys to be given */
     /* 2.1 set number */
@@ -2631,7 +2629,7 @@ void zintergetnCommand(client *c){
     }
     if (setnum < 1) {
         /* invalid setnum */
-        addReplyError(c, "at least 1 input key is needed for ZINTERGET");
+        addReplyError(c, "at least 1 input key is needed for ZINTERGETN");
         return;
     }
     if (setnum > c->argc-2) {
@@ -2699,11 +2697,16 @@ void zintergetnCommand(client *c){
                 /* limit */
                 j++; remaining--;
 
-                if ((getLongFromObjectOrReply(c, c->argv[j], &limit_top, NULL) != C_OK)){
+                if ((getLongFromObjectOrReply(c, c->argv[j], &limit, NULL) != C_OK)){
                     /* no limit number */
                     zfree(src);
                     addReply(c,shared.syntaxerr);
                     return;
+                }
+                if(limit>0){
+                    needResultCount = limit;
+                }else{
+                    needResultCount = -1 * limit;
                 }
                 j++; remaining--;
 
@@ -2726,7 +2729,6 @@ void zintergetnCommand(client *c){
         return;
     }
 
-    /* TODO Gumreal 20180726 */
     /* 4. inter */
     /* 4.1 init variables and the iterator */
     srand(time(NULL));
@@ -2756,36 +2758,48 @@ void zintergetnCommand(client *c){
 
         /* Only continue when present in every input. */
         if (j == setnum) {
-            if(!has_result){
-                 top = score;
-                 tmp = zuiNewSdsFromValue(&zval);
-                 has_result = true;
+            if(zslResult->length<needResultCount){
+                zslInsert(zslResult, score, zuiNewSdsFromValue(&zval));
 
-            }else if((1==limit_top && score<=top)||(-1==limit_top && score>=top)){
-                 if(fabs(score-top)<0.000001){
-                    random = rand();
-                    if(random % 2 ==0){
-                        tmp = zuiNewSdsFromValue(&zval);
-                    }
-                 }else{
-                    top = score;
-                    tmp = zuiNewSdsFromValue(&zval);
-                 }
+            }else if(limit>0){
+                /* need elements with MIN scores */
+                 if(score < zslResult->header->score){
+                    zslResult->header->ele = zuiNewSdsFromValue(&zval);
+                    zslResult->header->score = score;
+                }else if(score < zslResult->tail->score){
+                    zslInsert(zslResult, score, zuiNewSdsFromValue(&zval));
+                    zslDelete(zslResult, zslResult->tail->score, zslResult->tail->ele, 0);
+                }
+            }else{
+                /* need elements with MAX scores */
+                if(score > zslResult->tail->score){
+                    zslResult->tail->ele = zuiNewSdsFromValue(&zval);
+                    zslResult->tail->score = score;
+                }else if(score > zslResult->header->score){
+                    zslInsert(zslResult, score, zuiNewSdsFromValue(&zval));
+                    zslDelete(zslResult, zslResult->header->score, zslResult->header->ele, 0);
+                }
             }
         }
     }
 
-    /* 4.3 the result has been saved to tmp and top */
-    if(has_result && tmp){
-        addReplyMultiBulkLen(c, 2);
-        addReplyBulkCBuffer(c, tmp, sdslen(tmp));
-        addReplyDouble(c, top);
+    /* 4.3 reply */
+    if(zslResult->length>0){
+        /* add elements to reply */
+        addReplyMultiBulkLen(c, zslResult->length);
+
+        zskiplistNode *tempNode = zslResult->tail;
+        while(tempNode){
+           addReplyBulkCBuffer(c, tempNode->ele, sdslen(tempNode->ele));
+           tempNode = tempNode->backward;
+        }
     }else{
         /* empty result */
         addReply(c,shared.czero);
     }
 
-    /* 4.4 clear the iterator */
+    /* 4.4 clear */
+    zslFree(zslResult);
     zuiClearIterator(&src[0]);
 
     /* 5. free src */
