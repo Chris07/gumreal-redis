@@ -305,10 +305,8 @@ struct redisCommand redisCommandTable[] = {
     {"post",securityWarningCommand,-1,"lt",0,NULL,0,0,0,0,0},
     {"host:",securityWarningCommand,-1,"lt",0,NULL,0,0,0,0,0},
     {"latency",latencyCommand,-2,"aslt",0,NULL,0,0,0,0,0},
-
-    /** added by Gumreal */
-    {"zinterget",zintergetCommand,-3,"r",0,NULL,0,0,0,0,0},
-    {"zinterget",zintergetnCommand,-3,"r",0,NULL,0,0,0,0,0}
+    {"zinterget",zintergetCommand,-3,"r",0,NULL,0,0,0,0,0}, /** added by Gumreal 20180605 */
+    {"zintergetn",zintergetnCommand,-3,"r",0,NULL,0,0,0,0,0} /** added by Gumreal 20180727 */
 };
 
 /*============================ Utility functions ============================ */

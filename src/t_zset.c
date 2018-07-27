@@ -2758,26 +2758,21 @@ void zintergetnCommand(client *c){
 
         /* Only continue when present in every input. */
         if (j == setnum) {
-            if(zslResult->length<needResultCount){
+            if(zslResult->length < needResultCount){
                 zslInsert(zslResult, score, zuiNewSdsFromValue(&zval));
 
             }else if(limit>0){
                 /* need elements with MIN scores */
-                 if(score < zslResult->header->score){
-                    zslResult->header->ele = zuiNewSdsFromValue(&zval);
-                    zslResult->header->score = score;
-                }else if(score < zslResult->tail->score){
-                    zslInsert(zslResult, score, zuiNewSdsFromValue(&zval));
-                    zslDelete(zslResult, zslResult->tail->score, zslResult->tail->ele, 0);
+                if(score < zslResult->tail->score){
+                     zslInsert(zslResult, score, zuiNewSdsFromValue(&zval));
+                     zslDelete(zslResult, zslResult->tail->score, zslResult->tail->ele, 0);
                 }
             }else{
                 /* need elements with MAX scores */
-                if(score > zslResult->tail->score){
-                    zslResult->tail->ele = zuiNewSdsFromValue(&zval);
-                    zslResult->tail->score = score;
-                }else if(score > zslResult->header->score){
+                if(score > zslResult->header->score){
                     zslInsert(zslResult, score, zuiNewSdsFromValue(&zval));
-                    zslDelete(zslResult, zslResult->header->score, zslResult->header->ele, 0);
+                    zslDelete(zslResult, zslResult->header->level[0].forward->score,
+                            zslResult->header->level[0].forward->ele, 0);
                 }
             }
         }
