@@ -298,7 +298,8 @@ struct redisCommand redisCommandTable[] = {
     {"pfdebug",pfdebugCommand,-3,"w",0,NULL,0,0,0,0,0},
     {"post",securityWarningCommand,-1,"lt",0,NULL,0,0,0,0,0},
     {"host:",securityWarningCommand,-1,"lt",0,NULL,0,0,0,0,0},
-    {"latency",latencyCommand,-2,"aslt",0,NULL,0,0,0,0,0}
+    {"latency",latencyCommand,-2,"aslt",0,NULL,0,0,0,0,0},
+    {"zintergetn",zintergetnCommand,-3,"r",0,NULL,0,0,0,0,0} /** added by Gumreal 20180727 */
 };
 
 struct evictionPoolEntry *evictionPoolAlloc(void);
