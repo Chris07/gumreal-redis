@@ -244,6 +244,61 @@ int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node) {
     return 0; /* not found */
 }
 
+/* Update the score of an elmenent inside the sorted set skiplist.
+ * Note that the element must exist and must match 'score'.
+ * This function does not update the score in the hash table side, the
+ * caller should take care of it.
+ *
+ * Note that this function attempts to just update the node, in case after
+ * the score update, the node would be exactly at the same position.
+ * Otherwise the skiplist is modified by removing and re-adding a new
+ * element, which is more costly.
+ *
+ * The function returns the updated element skiplist node pointer. */
+zskiplistNode *zslUpdateScore(zskiplist *zsl, double curscore, sds ele, double newscore) {
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    int i;
+
+    /* We need to seek to element to update to start: this is useful anyway,
+     * we'll have to update or remove it. */
+    x = zsl->header;
+    for (i = zsl->level-1; i >= 0; i--) {
+        while (x->level[i].forward &&
+                (x->level[i].forward->score < curscore ||
+                    (x->level[i].forward->score == curscore &&
+                     sdscmp(x->level[i].forward->ele,ele) < 0)))
+        {
+            x = x->level[i].forward;
+        }
+        update[i] = x;
+    }
+
+    /* Jump to our element: note that this function assumes that the
+     * element with the matching score exists. */
+    x = x->level[0].forward;
+    serverAssert(x && curscore == x->score && sdscmp(x->ele,ele) == 0);
+
+    /* If the node, after the score update, would be still exactly
+     * at the same position, we can just update the score without
+     * actually removing and re-inserting the element in the skiplist. */
+    if ((x->backward == NULL || x->backward->score < newscore) &&
+        (x->level[0].forward == NULL || x->level[0].forward->score > newscore))
+    {
+        x->score = newscore;
+        return x;
+    }
+
+    /* No way to reuse the old node: we need to remove and insert a new
+     * one at a different place. */
+    zslDeleteNode(zsl, x, update);
+    zskiplistNode *newnode = zslInsert(zsl,newscore,x->ele);
+    /* We reused the old node x->ele SDS string, free the node now
+     * since zslInsert created a new one. */
+    x->ele = NULL;
+    zslFreeNode(x);
+    return newnode;
+}
+
 int zslValueGteMin(double value, zrangespec *spec) {
     return spec->minex ? (value > spec->min) : (value >= spec->min);
 }
@@ -507,7 +562,7 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
   * + means the max string possible
   *
   * If the string is valid the *dest pointer is set to the redis object
-  * that will be used for the comparision, and ex will be set to 0 or 1
+  * that will be used for the comparison, and ex will be set to 0 or 1
   * respectively if the item is exclusive or inclusive. C_OK will be
   * returned.
   *
@@ -1100,8 +1155,8 @@ unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsig
  * Common sorted set API
  *----------------------------------------------------------------------------*/
 
-unsigned int zsetLength(const robj *zobj) {
-    int length = -1;
+unsigned long zsetLength(const robj *zobj) {
+    unsigned long length = 0;
     if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
         length = zzlLength(zobj->ptr);
     } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
@@ -1341,13 +1396,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
 
             /* Remove and re-insert when score changes. */
             if (score != curscore) {
-                zskiplistNode *node;
-                serverAssert(zslDelete(zs->zsl,curscore,ele,&node));
-                znode = zslInsert(zs->zsl,score,node->ele);
-                /* We reused the node->ele SDS string, free the node now
-                 * since zslInsert created a new one. */
-                node->ele = NULL;
-                zslFreeNode(node);
+                znode = zslUpdateScore(zs->zsl,curscore,ele,score);
                 /* Note that we did not removed the original element from
                  * the hash table representing the sorted set, so we just
                  * update the score. */
@@ -1878,7 +1927,7 @@ void zuiClearIterator(zsetopsrc *op) {
     }
 }
 
-int zuiLength(zsetopsrc *op) {
+unsigned long zuiLength(zsetopsrc *op) {
     if (op->subject == NULL)
         return 0;
 
@@ -2085,7 +2134,11 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
 }
 
 int zuiCompareByCardinality(const void *s1, const void *s2) {
-    return zuiLength((zsetopsrc*)s1) - zuiLength((zsetopsrc*)s2);
+    unsigned long first = zuiLength((zsetopsrc*)s1);
+    unsigned long second = zuiLength((zsetopsrc*)s2);
+    if (first > second) return 1;
+    if (first < second) return -1;
+    return 0;
 }
 
 #define REDIS_AGGR_SUM 1
@@ -2129,7 +2182,7 @@ void zunionInterGenericCommand(client *c, robj *dstkey, int op) {
     zsetopsrc *src;
     zsetopval zval;
     sds tmp;
-    unsigned int maxelelen = 0;
+    size_t maxelelen = 0;
     robj *dstobj;
     zset *dstzset;
     zskiplistNode *znode;
@@ -2363,8 +2416,8 @@ void zrangeGenericCommand(client *c, int reverse) {
     int withscores = 0;
     long start;
     long end;
-    int llen;
-    int rangelen;
+    long llen;
+    long rangelen;
 
     if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != C_OK) ||
         (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != C_OK)) return;
@@ -2671,7 +2724,7 @@ void zcountCommand(client *c) {
     robj *key = c->argv[1];
     robj *zobj;
     zrangespec range;
-    int count = 0;
+    unsigned long count = 0;
 
     /* Parse the range arguments */
     if (zslParseRange(c->argv[2],c->argv[3],&range) != C_OK) {
@@ -2748,7 +2801,7 @@ void zlexcountCommand(client *c) {
     robj *key = c->argv[1];
     robj *zobj;
     zlexrangespec range;
-    int count = 0;
+    unsigned long count = 0;
 
     /* Parse the range arguments */
     if (zslParseLexRange(c->argv[2],c->argv[3],&range) != C_OK) {
@@ -3163,8 +3216,8 @@ void genericZpopCommand(client *c, robj **keyv, int keyc, int where, int emitkey
             signalModifiedKey(c->db,key);
         }
 
-        addReplyDouble(c,score);
         addReplyBulkCBuffer(c,ele,sdslen(ele));
+        addReplyDouble(c,score);
         sdsfree(ele);
         arraylen += 2;
 
@@ -3216,9 +3269,9 @@ void blockingGenericZpopCommand(client *c, int where) {
                 return;
             } else {
                 if (zsetLength(o) != 0) {
-                    /* Non empty zset, this is like a normal Z[REV]POP. */
+                    /* Non empty zset, this is like a normal ZPOP[MIN|MAX]. */
                     genericZpopCommand(c,&c->argv[j],1,where,1,NULL);
-                    /* Replicate it as an Z[REV]POP instead of BZ[REV]POP. */
+                    /* Replicate it as an ZPOP[MIN|MAX] instead of BZPOP[MIN|MAX]. */
                     rewriteClientCommandVector(c,2,
                         where == ZSET_MAX ? shared.zpopmax : shared.zpopmin,
                         c->argv[j]);
