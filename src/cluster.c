@@ -233,6 +233,7 @@ int clusterLoadConfig(char *filename) {
                 *p = '\0';
                 direction = p[1]; /* Either '>' or '<' */
                 slot = atoi(argv[j]+1);
+                if (slot < 0 || slot >= CLUSTER_SLOTS) goto fmterr;
                 p += 3;
                 cn = clusterLookupNode(p);
                 if (!cn) {
@@ -252,6 +253,8 @@ int clusterLoadConfig(char *filename) {
             } else {
                 start = stop = atoi(argv[j]);
             }
+            if (start < 0 || start >= CLUSTER_SLOTS) goto fmterr;
+            if (stop < 0 || stop >= CLUSTER_SLOTS) goto fmterr;
             while(start <= stop) clusterAddSlot(n, start++);
         }
 
@@ -2083,7 +2086,7 @@ void clusterReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
  * from event handlers that will do stuff with the same link later. */
 void clusterSendMessage(clusterLink *link, unsigned char *msg, size_t msglen) {
     if (sdslen(link->sndbuf) == 0 && msglen != 0)
-        aeCreateFileEvent(server.el,link->fd,AE_WRITABLE,
+        aeCreateFileEvent(server.el,link->fd,AE_WRITABLE|AE_BARRIER,
                     clusterWriteHandler,link);
 
     link->sndbuf = sdscatlen(link->sndbuf, msg, msglen);
@@ -2559,9 +2562,10 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
     }
 
     /* We can vote for this slave. */
-    clusterSendFailoverAuth(node);
     server.cluster->lastVoteEpoch = server.cluster->currentEpoch;
     node->slaveof->voted_time = mstime();
+    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|CLUSTER_TODO_FSYNC_CONFIG);
+    clusterSendFailoverAuth(node);
     serverLog(LL_WARNING, "Failover auth granted to %.40s for epoch %llu",
         node->name, (unsigned long long) server.cluster->currentEpoch);
 }
