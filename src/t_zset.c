@@ -2380,7 +2380,6 @@ void zintergetnCommand(client *c){
         addReplyMultiBulkLen(c, dstzset->zsl->length);
         zskiplistNode *tempNode = dstzset->zsl->tail;
         while(tempNode){
-//            addReplyBulkCBuffer(c, tempNode->obj->ptr, sdslen(tempNode->obj->ptr));
             addReplyBulk(c, tempNode->obj);
             tempNode = tempNode->backward;
         }
