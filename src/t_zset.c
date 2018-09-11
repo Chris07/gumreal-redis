@@ -2185,6 +2185,7 @@ void zintergetnCommand(client *c){
     int i, j;
     long setnum;
     int aggregate = REDIS_AGGR_SUM;
+    int withscores = 0;
     zsetopsrc *src;
     zsetopval zval;
     robj *tmp;
@@ -2266,7 +2267,7 @@ void zintergetnCommand(client *c){
                 }
                 j++; remaining--;
 
-            } else if(!strcasecmp(c->argv[j]->ptr, "limit")){
+            } else if(remaining >=2 && !strcasecmp(c->argv[j]->ptr, "limit")){
                 /* limit */
                 j++; remaining--;
 
@@ -2283,7 +2284,11 @@ void zintergetnCommand(client *c){
                 }
                 j++; remaining--;
 
-            } else {
+            } else if(remaining >=1 && !strcasecmp(c->argv[j]->ptr, "withscores")){
+                j++; remaining--;
+                withscores = 1;
+
+            }else {
                 zfree(src);
                 addReply(c,shared.syntaxerr);
                 return;
@@ -2377,12 +2382,16 @@ void zintergetnCommand(client *c){
     /* 4.3 reply */
     if(dstzset->zsl->length>0){
         /* add elements to reply */
-        addReplyMultiBulkLen(c, dstzset->zsl->length);
+        addReplyMultiBulkLen(c, (1==withscores)?2*dstzset->zsl->length:dstzset->zsl->length);
         zskiplistNode *tempNode = dstzset->zsl->tail;
         while(tempNode){
             addReplyBulk(c, tempNode->obj);
+            if(1==withscores){
+                addReplyDouble(c, tempNode->score);
+            }
             tempNode = tempNode->backward;
         }
+
     }else{
         /* empty result */
         addReply(c,shared.czero);
