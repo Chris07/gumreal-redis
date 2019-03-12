@@ -2414,7 +2414,7 @@ void zinterdiffgetnCommand(client *c){
     int aggregate = REDIS_AGGR_SUM;
     int withscores = 0;
     zsetopsrc *src;
-    zsetopsrc *diffsrc;
+    zsetopsrc *diffsrc = NULL;
     zsetopval zval;
     robj *tmp;
     robj *dstobj;
@@ -2475,7 +2475,9 @@ void zinterdiffgetnCommand(client *c){
                 for (i = 0; i < setnum; i++, j++, remaining--) {
                     if (getDoubleFromObjectOrReply(c, c->argv[j],&src[i].weight, "weight value is not a float") != C_OK){
                         zfree(src);
-                        zfree(diffsrc);
+                        if(NULL != diffsrc){
+                            zfree(diffsrc);
+                        }
                         return;
                     }
                 }
@@ -2491,7 +2493,9 @@ void zinterdiffgetnCommand(client *c){
                     aggregate = REDIS_AGGR_MAX;
                 } else {
                     zfree(src);
-                    zfree(diffsrc);
+                    if(NULL != diffsrc){
+                        zfree(diffsrc);
+                    }
                     addReply(c,shared.syntaxerr);
                     return;
                 }
@@ -2499,49 +2503,64 @@ void zinterdiffgetnCommand(client *c){
 
             }else if(!strcasecmp(c->argv[j]->ptr, "diff")){
                 /* diff */
+                // more than one "diff" parameter
+                if(NULL != diffsrc){
+                    zfree(src);
+                    zfree(diffsrc);
+                    addReply(c,shared.syntaxerr);
+                    serverLog(LL_WARNING,"zinterdiffgetn: can only have one diff parameter");
+                    return;
+                }
+
                 // parameter: diff sets number
                 j++; remaining--;
                 if(getLongFromObjectOrReply(c, c->argv[j], &diffnum, NULL) != C_OK){
                     zfree(src);
-                    zfree(diffsrc);
                     addReply(c,shared.syntaxerr);
+                    serverLog(LL_WARNING,"zinterdiffgetn: cannot get diffnum");
+                    return;
+                }
+                if(diffnum<=0){
+                    zfree(src);
+                    addReply(c,shared.syntaxerr);
+                    serverLog(LL_WARNING,"zinterdiffgetn: invalid diffnum");
                     return;
                 }
 
-                if (diffnum > 0 ){
-                    //check paramter numbers
-                    if(remaining < diffnum){
-                        zfree(src);
-                        addReply(c,shared.syntaxerr);
-                        return;
-                    }
+                //check paramter numbers
+                if(remaining < diffnum){
+                    zfree(src);
+                    addReply(c,shared.syntaxerr);
+                    serverLog(LL_WARNING,"zinterdiffgetn: remaining is less than diffnum");
+                    diffnum = 0;    //reset the diffnum
+                    return;
+                }
 
-                    //get diff sets
-                    diffsrc = zcalloc(sizeof(zsetopsrc) * diffnum);
-                    for (k = 0; i < diffnum; k++) {
-                        //next parameter
-                        j++; remaining--;
-
-                        //sets
-                        robj *obj = lookupKeyRead(c->db,c->argv[j]);
-                        if (obj != NULL) {
-                            if (obj->type != OBJ_ZSET && obj->type != OBJ_SET) {
-                                zfree(src);
-                                zfree(diffsrc);
-
-                                addReply(c,shared.wrongtypeerr);
-                                return;
-                            }
-
-                            diffsrc[k].subject = obj;
-                            diffsrc[k].type = obj->type;
-                            diffsrc[k].encoding = obj->encoding;
-                        }
-                    }
-
+                //get diff sets
+                diffsrc = zcalloc(sizeof(zsetopsrc) * diffnum);
+                for (k = 0; k < diffnum; k++) {
                     //next parameter
                     j++; remaining--;
+
+                    //sets
+                    robj *obj = lookupKeyRead(c->db,c->argv[j]);
+                    if (obj != NULL) {
+                        if (obj->type != OBJ_ZSET && obj->type != OBJ_SET) {
+                            zfree(src);
+                            zfree(diffsrc);
+
+                            addReply(c,shared.wrongtypeerr);
+                            return;
+                        }
+
+                        diffsrc[k].subject = obj;
+                        diffsrc[k].type = obj->type;
+                        diffsrc[k].encoding = obj->encoding;
+                    }
                 }
+
+                //next parameter
+                j++; remaining--;
 
             }else if(!strcasecmp(c->argv[j]->ptr, "limit")){
                 /* limit */
@@ -2550,7 +2569,9 @@ void zinterdiffgetnCommand(client *c){
                 if ((getLongFromObjectOrReply(c, c->argv[j], &limit, NULL) != C_OK)){
                     /* no limit number */
                     zfree(src);
-                    zfree(diffsrc);
+                    if(NULL != diffsrc){
+                        zfree(diffsrc);
+                    }
                     addReply(c,shared.syntaxerr);
                     return;
                 }
@@ -2567,7 +2588,9 @@ void zinterdiffgetnCommand(client *c){
 
             }else {
                 zfree(src);
-                zfree(diffsrc);
+                if(NULL != diffsrc){
+                    zfree(diffsrc);
+                }
                 addReply(c,shared.syntaxerr);
                 return;
             }
@@ -2581,7 +2604,9 @@ void zinterdiffgetnCommand(client *c){
     /* 3.2 Skip everything if the smallest input is empty. */
     if (0 == zuiLength(&src[0])) {
         zfree(src);
-        zfree(diffsrc);
+        if(NULL != diffsrc){
+            zfree(diffsrc);
+        }
         addReply(c,shared.czero);
         return;
     }
@@ -2624,8 +2649,8 @@ void zinterdiffgetnCommand(client *c){
             //diff sets
             /* find the item in other sets */
             inDiffSrc = 0;
-            for (k = 1; k < diffnum; k++) {
-                if (NULL != diffsrc[k].subject && zuiFind(&diffsrc[k],&zval,&value)){
+            for (k = 0; k < diffnum; k++) {
+                if (zuiFind(&diffsrc[k],&zval,&value)){
                     inDiffSrc = 1;
                     break;
                 }
@@ -2693,7 +2718,9 @@ void zinterdiffgetnCommand(client *c){
 
     /* 5. free src */
     zfree(src);
-    zfree(diffsrc);
+    if(NULL != diffsrc){
+        zfree(diffsrc);
+    }
 }
 
 void zrangeGenericCommand(client *c, int reverse) {
