@@ -1654,6 +1654,7 @@ void securityWarningCommand(client *c);
 /* *** Added by Gumreal */
 void zintergetnCommand(client *c);
 void zinterdiffgetnCommand(client *c);
+void zuidgetCommand(client *c);
 
 #if defined(__GNUC__)
 void *calloc(size_t count, size_t size) __attribute__ ((deprecated));
