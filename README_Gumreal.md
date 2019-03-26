@@ -1,33 +1,33 @@
 # Branch gumreal-base-3.2.11
 
-# Modified: zinterstore
+# Modified: ZINTERSTORE
 ## 增加谓词 limit
 可选值：
 * limit 1: 结果集合中仅保留 Min Score 元素，如果该Score对应多个元素，随机选择其一；
 * limit -1: 结果集合中仅保留 Max Score 元素，如果该Score对应多个元素，随机选择其一.
 
 ## 语法
-ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [LIMIT 1|-1]
+    ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [LIMIT 1|-1]
 
 例如
-ZINTERSTORE sum_point 2 mid_test fin_test LIMIT -1
+    ZINTERSTORE sum_point 2 mid_test fin_test LIMIT -1
 
-# Added: zintergetn
+# Added: ZINTERGETN
 进行 zinter 操作， 不保留结果集合，返回结果集合中指定数量的 max score 或 min score 元素。
 min 或者 max， 取决于参数 limit 的值。
 
 ## 语法
-ZINTERGETN numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [LIMIT n|-n]
+    ZINTERGETN numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [LIMIT n|-n]
 
 
-# Added: zinterdiffgetn
+# Added: ZINTERDIFFGETN
 首先进行 zinter 操作， 然后进行 diff 操作求差集， 返回结果集合中指定数量的 max score 或 min score 元素。
 min 或者 max， 取决于参数 limit 的值。
 * limit < 0: max
 * limit > 0: min
 
 ## 语法
-ZINTERDIFFGETN numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [DIFF numDiffKeys diffKey [diffKey ...]] [LIMIT n|-n]
+    ZINTERDIFFGETN numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [DIFF numDiffKeys diffKey [diffKey ...]] [LIMIT n|-n]
 
 例如：
 
@@ -45,3 +45,27 @@ ZINTERDIFFGETN numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SU
 
 那么，命令执行后：
 * 结果为 b
+
+# Added: ZUIDGET 
+首先进行一个或多个 union 操作，每个 union 操作的结果 inter 操作的一个输入集合；
+然后进行一次 inter 操作，
+最后在进行 diff 差集操作，从 inter 结果集合中去除 diff 集合中的元素。
+不保留结果集合，返回结果集合中指定数量的 max score 或 min score 元素。
+min 或者 max， 取决于参数 limit 的值。
+
+## 语法
+    ZUIDGET 
+    [UNION numUnionkeys unionKey unionKey [unionKey ...]] 
+    INTER numInterkeys interKey [interKey ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] 
+    [DIFF numDiffKeys diffKey [diffKey ...]] 
+    [LIMIT n|-n]
+    
+## 例如
+    ZUIDGET 
+    UNION 2 S11 S12 UNION 2 S21 S22 
+    INTER 3 S3 S4 Z5 WEIGHTS 0 0 0 0 1 AGGREGATE SUM
+    DIFF 2 S5 S6
+
+等同于集合运算表达式：
+(S11 ∪ S12) ∩ (S21 ∪ S22) ∩ S3 ∩ S4 ∩ Z5 - (S5 ∪ S6)
+    
