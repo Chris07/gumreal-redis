@@ -2731,12 +2731,11 @@ void zuidgetCommand(client *c){
     int unionGroupNum = 0;          //hom many union operations?
     int *unionKeyNumPtr = NULL;      //key nums for each union operation
     int *unionEleCountPtr = NULL;   //elements count for each union operation
-    long unionNum = 0;
+    long unionTempNum = 0;
     int unionNumAllSum = 0;         //num of all union keys
     zsetopsrc *unionSrc = NULL;
     int unionGroupPos = 0;
     int unionKeyPos = 0;
-    int unionEleTempCount = 0;
 
     //inter
     long interNum = 0;
@@ -2754,7 +2753,7 @@ void zuidgetCommand(client *c){
 
     //temp
     int beginOtherOp = 0;
-    int i, j, k, inUnionSrc, inDiffSrc;
+    int i, j, k;
     zsetopval zval;
     robj *tmp = NULL;
     robj *dstobj = NULL;
@@ -2764,26 +2763,37 @@ void zuidgetCommand(client *c){
     //2.1 pre-process: init union group num and key num
     for(i=1; i < c->argc; i++){
         if(!strcasecmp(c->argv[i]->ptr,"union")){
-            /* union count */
+            //union count
             unionGroupNum++;
 
-            /* union key num */
-            i++;
-            if(i >= c->argc || getLongFromObjectOrReply(c, c->argv[i], &unionNum, NULL) != C_OK){
+            //union key num
+            i++; unionTempNum = 0;
+            if(i >= c->argc){
                 addReply(c,shared.syntaxerr);
-                serverLog(LL_WARNING,"zuidget: union must have parameter for union set num");
+                serverLog(LL_WARNING,"zuidget: cannot get union num");
                 return;
             }
-            unionNumAllSum += unionNum;
+            if(getLongFromObjectOrReply(c, c->argv[i], &unionTempNum, NULL) != C_OK){
+                serverLog(LL_WARNING,"zuidget: invalid union num");
+                return;
+            }
+            if(unionTempNum < 2){
+                addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: invalid union num");
+                return;
+            }
 
-            /* skip union keys */
-            i+= unionNum;
+            //union num ok
+            unionNumAllSum += unionTempNum;
+
+            //skip union keys
+            i+= unionTempNum;
 
         }else{
             break;
         }
     }
-    if(unionGroupNum >0  && unionNumAllSum > 0){
+    if(unionGroupNum >0){
         unionKeyNumPtr = zcalloc(sizeof(int) * unionGroupNum);
         unionEleCountPtr = zcalloc(sizeof(int) * unionGroupNum);
         unionSrc = zcalloc(sizeof(zsetopsrc) * unionNumAllSum);
@@ -2792,10 +2802,12 @@ void zuidgetCommand(client *c){
     //2.2 process paramters
     for(i=1; i < c->argc; i++){
         //count remaining
-        int remaining = c->argc - i - 1; //the remaining parameters not including the parameter i
+        int remaining = c->argc - i - 1; //the remaining parameters not including current parameter i
 
         //2.2.1 union
         if(!strcasecmp(c->argv[i]->ptr,"union")){
+            int unionEleTempCount = 0;
+
             if(beginOtherOp){
                 zfree(unionKeyNumPtr);
                 zfree(unionEleCountPtr);
@@ -2809,11 +2821,9 @@ void zuidgetCommand(client *c){
             }
 
             //union set num
+            unionTempNum = 0;
             i++; remaining--;
-            if((i >= c->argc)
-                    || (getLongFromObjectOrReply(c, c->argv[i], &unionNum, NULL) != C_OK)
-                    || unionNum<2
-                    || remaining < unionNum){
+            if(i>=c->argc){
                 zfree(unionKeyNumPtr);
                 zfree(unionEleCountPtr);
                 zfree(unionSrc);
@@ -2821,12 +2831,33 @@ void zuidgetCommand(client *c){
                 zfree(diffSrc);
 
                 addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: need union num");
+                return;
+            }
+            if(getLongFromObjectOrReply(c, c->argv[i], &unionTempNum, NULL) != C_OK){
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
                 serverLog(LL_WARNING,"zuidget: invald union set num");
                 return;
             }
+            if(unionTempNum < 2 || remaining < unionTempNum){
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
 
-            unionEleTempCount = 0;
-            for(j=0; j<unionNum; j++){
+                addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: union sets dose not match union num");
+                return;
+            }
+
+            //get sets
+            for(j=0; j<unionTempNum; j++){
                 //pos to next
                 i++; remaining--;
 
@@ -2859,8 +2890,21 @@ void zuidgetCommand(client *c){
                 unionKeyPos++;
             }
 
+            //shortcut
+            if(0 == unionEleTempCount){
+                //Skip everything if the union result is empty
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
+                addReply(c,shared.czero);
+                return;
+            }
+
             //group count
-            unionKeyNumPtr[unionGroupPos] = unionNum;
+            unionKeyNumPtr[unionGroupPos] = unionTempNum;
             unionEleCountPtr[unionGroupPos] = unionEleTempCount;
 
             //next union group
@@ -2886,10 +2930,7 @@ void zuidgetCommand(client *c){
 
             //inter set num
             i++; remaining--;
-            if((i >= c->argc)
-                    || (getLongFromObjectOrReply(c, c->argv[i], &interNum, NULL) != C_OK)
-                    || interNum<1
-                    || remaining < interNum){
+            if(i>=c->argc){
                 zfree(unionKeyNumPtr);
                 zfree(unionEleCountPtr);
                 zfree(unionSrc);
@@ -2897,7 +2938,28 @@ void zuidgetCommand(client *c){
                 zfree(diffSrc);
 
                 addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: need inter sets num");
+                return;
+            }
+            if(getLongFromObjectOrReply(c, c->argv[i], &interNum, NULL) != C_OK){
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
                 serverLog(LL_WARNING,"zuidget: invalid inter set num");
+                return;
+            }
+            if(interNum < 1 || remaining < interNum){
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
+                addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: invalid inter sets num or not matched");
                 return;
             }
 
@@ -2968,6 +3030,7 @@ void zuidgetCommand(client *c){
                 i++; remaining--;
 
                 //get weights
+                tempWeight = 0.0;
                 if (getDoubleFromObjectOrReply(c, c->argv[i],&tempWeight, NULL) != C_OK){
                     zfree(unionKeyNumPtr);
                     zfree(unionEleCountPtr);
@@ -2975,7 +3038,6 @@ void zuidgetCommand(client *c){
                     zfree(interSrc);
                     zfree(diffSrc);
 
-                    addReply(c,shared.wrongtypeerr);
                     serverLog(LL_WARNING,"zuidget: invalid weights value");
                     return;
                 }
@@ -2983,20 +3045,21 @@ void zuidgetCommand(client *c){
                 //set
                 if(j<unionGroupNum){
                     //union set weights
-                    unionKeyPos = 0;
-                    for(unionGroupPos=0; unionGroupPos<unionGroupNum; unionGroupPos++){
-                        if(unionGroupPos == j){
-                            for(k=0; k<unionKeyNumPtr[j]; k++){
-                                if(NULL != unionSrc[unionKeyPos].subject){
-                                    unionSrc[unionKeyPos].weight = tempWeight;
+                    int keyIter = 0;
+                    for(int group=0; group<unionGroupNum; group++){
+                        if(group == j){
+                            for(k=0; k<unionKeyNumPtr[group]; k++){
+                                if(NULL != unionSrc[keyIter+k].subject){
+                                    unionSrc[keyIter+k].weight = tempWeight;
                                 }
-
-                                //pos to next union set
-                                unionKeyPos++;
                             }
-                        }else{
-                            unionKeyPos += unionKeyNumPtr[j];
+
+                            //ok, we have set weights for the union group, skip other groups
+                            break;
                         }
+
+                        //prepare to the next group union keys
+                        keyIter += unionKeyNumPtr[group];
                     }
 
                 }else{
@@ -3012,8 +3075,21 @@ void zuidgetCommand(client *c){
             //flag
             beginOtherOp = 1;
 
+            //has value?
+            if(remaining<1){
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
+                addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: need aggregate value");
+                return;
+            }
+
             //aggregate
-            i++; remaining--;
+            i++; remaining--;            
             if (!strcasecmp(c->argv[i]->ptr,"sum")) {
                 aggregate = REDIS_AGGR_SUM;
 
@@ -3056,9 +3132,7 @@ void zuidgetCommand(client *c){
             //diff
             // parameter: diff sets number
             i++; remaining--;
-            if((getLongFromObjectOrReply(c, c->argv[i], &diffNum, NULL) != C_OK )
-                    || diffNum<=0
-                    || remaining < diffNum){
+            if(i>=c->argc){
                 zfree(unionKeyNumPtr);
                 zfree(unionEleCountPtr);
                 zfree(unionSrc);
@@ -3066,7 +3140,28 @@ void zuidgetCommand(client *c){
                 zfree(diffSrc);
 
                 addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: need diff sets num");
+                return;
+            }
+            if(getLongFromObjectOrReply(c, c->argv[i], &diffNum, NULL) != C_OK){
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
                 serverLog(LL_WARNING,"zuidget: invalid diff set num");
+                return;
+            }
+            if(diffNum<=0 || remaining < diffNum){
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
+                addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget:  invalid diff sets num or not matched");
                 return;
             }
 
@@ -3108,10 +3203,8 @@ void zuidgetCommand(client *c){
             //flag
             beginOtherOp = 1;
 
-            //limit
-            i++; remaining--;
-            if ((getLongFromObjectOrReply(c, c->argv[i], &limit, NULL) != C_OK)){
-                /* no limit number */
+            //has value?
+            if(remaining<1){
                 zfree(unionKeyNumPtr);
                 zfree(unionEleCountPtr);
                 zfree(unionSrc);
@@ -3119,6 +3212,20 @@ void zuidgetCommand(client *c){
                 zfree(diffSrc);
 
                 addReply(c,shared.syntaxerr);
+                serverLog(LL_WARNING,"zuidget: need limit value");
+                return;
+            }
+
+            //limit
+            i++; remaining--;
+            if (getLongFromObjectOrReply(c, c->argv[i], &limit, NULL) != C_OK){
+                /* no limit number */
+                zfree(unionKeyNumPtr);
+                zfree(unionEleCountPtr);
+                zfree(unionSrc);
+                zfree(interSrc);
+                zfree(diffSrc);
+
                 serverLog(LL_WARNING,"zuidget: invalid limit value");
                 return;
             }
@@ -3143,26 +3250,12 @@ void zuidgetCommand(client *c){
     }
 
     /* 3. sort sets from the smallest to largest, this will improve our algorithm's performance */
-    //3.1 union set
-    for(i=0; i<unionGroupNum; i++){
-        if(0==unionEleCountPtr[i]){
-            //Skip everything if the union result is empty
-            zfree(unionKeyNumPtr);
-            zfree(unionEleCountPtr);
-            zfree(unionSrc);
-            zfree(interSrc);
-            zfree(diffSrc);
-
-            addReply(c,shared.czero);
-            return;
-        }
-    }
-
-    //3.2 inter set
-    //3.2.1 sort
+    //already checkout empty union sets above, just checkout inter set
+    //inter set
+    //3.1 sort
     qsort(interSrc,interNum,sizeof(zsetopsrc),zuiCompareByCardinality);
 
-    //3.2.2 Skip everything if the smallest input is empty
+    //3.2 Skip everything if the smallest input is empty
     if (0 == zuiLength(&interSrc[0])) {
         zfree(unionKeyNumPtr);
         zfree(unionEleCountPtr);
@@ -3212,18 +3305,18 @@ void zuidgetCommand(client *c){
         }
 
         //Only continue to find in union sets, if present in every inter set
-        if(i == interNum){
-            inUnionSrc = 0;
-            unionKeyPos = 0;
-            for(unionGroupPos=0; unionGroupPos<unionGroupNum; unionGroupPos++, i++){
+        if(i == interNum){            
+            int keyIter = 0;
+            int inUnionSrc = 0;
+            for(int group=0; group<unionGroupNum; group++, i++){
                 //the union result is empty
-                if(0 == unionEleCountPtr[unionGroupPos]){
+                if(0 == unionEleCountPtr[group]){
                     break;
                 }
 
-                for(k=0; k<unionKeyNumPtr[unionGroupPos]; k++){
-                    if (zuiFind(&unionSrc[unionKeyPos+k],&zval,&value)) {
-                        value *= unionSrc[unionKeyPos+k].weight;
+                for(k=0; k<unionKeyNumPtr[group]; k++){
+                    if (zuiFind(&unionSrc[keyIter+k],&zval,&value)) {
+                        value *= unionSrc[keyIter+k].weight;
                         zunionInterAggregate(&score,value,aggregate);
                         inUnionSrc = 1;
                         break;
@@ -3231,7 +3324,7 @@ void zuidgetCommand(client *c){
                 }
 
                 //pos to the first set of the next union group
-                unionKeyPos+=unionKeyNumPtr[unionGroupPos];
+                keyIter+=unionKeyNumPtr[group];
 
                 //found?
                 if(0==inUnionSrc){
@@ -3243,7 +3336,7 @@ void zuidgetCommand(client *c){
         //Only continue when present in every input
         if (i == interNum + unionGroupNum) {
             //finding the item in the diff sets
-            inDiffSrc = 0;
+            int inDiffSrc = 0;
             for (k = 0; k < diffNum; k++) {
                 if (zuiFind(&diffSrc[k],&zval,&value)){
                     inDiffSrc = 1;
