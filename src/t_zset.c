@@ -3307,18 +3307,22 @@ void zuidgetCommand(client *c){
         //Only continue to find in union sets, if present in every inter set
         if(i == interNum){            
             int keyIter = 0;
-            int inUnionSrc = 0;
-            for(int group=0; group<unionGroupNum; group++, i++){
+
+            //for each union group
+            for(int group=0; group < unionGroupNum; group++, i++){
+                //init group_found flag
+                int inUnionSrc = 0;
+
                 //the union result is empty
                 if(0 == unionEleCountPtr[group]){
                     break;
                 }
 
-                for(k=0; k<unionKeyNumPtr[group]; k++){
+                for(k=0; k < unionKeyNumPtr[group]; k++){
                     if (zuiFind(&unionSrc[keyIter+k],&zval,&value)) {
                         value *= unionSrc[keyIter+k].weight;
                         zunionInterAggregate(&score,value,aggregate);
-                        inUnionSrc = 1;
+                        inUnionSrc=1;
                         break;
                     }
                 }
